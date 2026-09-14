@@ -35,17 +35,30 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # 4. 安装 NuGet
+      # 4. 检查 Windows SDK
+      - name: Check Windows SDK
+        shell: powershell
+        run: |
+          Write-Host "Windows SDK:"
+          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Lib" |
+            Select-Object Name
+
+          Write-Host ""
+          Write-Host "Windows SDK References:"
+          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\References" |
+            Select-Object Name
+
+      # 5. 安装 NuGet
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
-      # 5. 恢复 NuGet packages
+      # 6. 恢复 NuGet packages
       - name: NuGet restore
         shell: powershell
         run: |
           nuget restore QuickLook.sln
 
-      # 6. 编译 QuickLook
+      # 7. 编译 QuickLook
       - name: Build QuickLook
         shell: powershell
         run: |
@@ -54,7 +67,7 @@ jobs:
             /p:Platform="Any CPU" `
             /m
 
-      # 7. 查找 QuickLook.exe
+      # 8. 查找 QuickLook.exe
       - name: Check build output
         shell: powershell
         run: |
@@ -75,7 +88,7 @@ jobs:
           Write-Host "Found:"
           Write-Host $exe.FullName
 
-      # 8. 上传 QuickLook.exe
+      # 9. 上传 QuickLook.exe
       - name: Upload QuickLook.exe
         uses: actions/upload-artifact@v4
         with:
