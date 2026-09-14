@@ -82,7 +82,9 @@ namespace QuickLook
             // skip invalid keys, but record the timestamp
             if (!_validKeys.Contains(e.KeyCode))
             {
-                Debug.WriteLine($"Invalid keypress: key={e.KeyCode},down={isKeyDown}, time={_lastInvalidKeyPressTick}");
+                Debug.WriteLine(
+                    $"Invalid keypress: key={e.KeyCode},down={isKeyDown}, time={_lastInvalidKeyPressTick}");
+
                 _lastInvalidKeyPressTick = DateTime.Now.Ticks;
                 return;
             }
@@ -94,6 +96,7 @@ namespace QuickLook
             // skip if key is valid but too close after pressing an invalid key
             if (DateTime.Now.Ticks - _lastInvalidKeyPressTick < VALID_KEY_PRESS_DELAY)
                 return;
+
             _lastInvalidKeyPressTick = 0L;
 
             // skip if user is holding Space (don't skip other valid keys)
@@ -101,26 +104,38 @@ namespace QuickLook
             {
                 if (_spaceIsDown)
                     return;
-                _spaceIsDown = true;
+
                 _spaceHoldTick = DateTime.Now.Ticks;
             }
 
             // check if the valid key is a preview request
             if (isKeyDown)
             {
-                _isPreviewRequest = NativeMethods.QuickLook.GetFocusedWindowType() !=
-                                    NativeMethods.QuickLook.FocusedWindowType.Invalid;
-                _isPreviewRequest |= WindowHelper.IsForegroundWindowBelongToSelf();
-            } // else (when isKeyDown is false), _isPreviewRequest retain its current state
+                _isPreviewRequest =
+                    NativeMethods.QuickLook.GetFocusedWindowType() !=
+                    NativeMethods.QuickLook.FocusedWindowType.Invalid;
 
-            // call InvokeRoutine only when user pressed a key in a valid window, or
-            // released a key which was pressed in a valid window, with an exception of Space which
-            // must be hold for 750ms before releasing.
+                _isPreviewRequest |= WindowHelper.IsForegroundWindowBelongToSelf();
+            }
+            // else (when isKeyDown is false), _isPreviewRequest retain its current state
+
+            // call InvokeRoutine only when user pressed a key in a valid window,
+            // or released a key which was pressed in a valid window,
+            // with an exception of Space which must be hold for 750ms before releasing.
             if (_isPreviewRequest)
             {
-                if (isKeyDown || e.KeyCode != Keys.Space ||
+                if (isKeyDown ||
+                    e.KeyCode != Keys.Space ||
                     DateTime.Now.Ticks - _spaceHoldTick >= HOLD_TO_PREVIEW_DURATION)
+                {
                     InvokeRoutine(e.KeyCode, isKeyDown);
+
+                    // Official behavior:
+                    // mark Space as down only after the key-down event
+                    // has actually been accepted and InvokeRoutine() called.
+                    if (isKeyDown && e.KeyCode == Keys.Space)
+                        _spaceIsDown = true;
+                }
             }
 
             // when the key has been released, reset variables
@@ -142,6 +157,7 @@ namespace QuickLook
                     case Keys.Enter:
                         PipeServerManager.SendMessage(PipeMessages.RunAndClose);
                         break;
+
                     case Keys.Space:
                         PipeServerManager.SendMessage(PipeMessages.Toggle);
                         break;
@@ -157,9 +173,11 @@ namespace QuickLook
                     case Keys.Right:
                         PipeServerManager.SendMessage(PipeMessages.Switch);
                         break;
+
                     case Keys.Escape:
                         PipeServerManager.SendMessage(PipeMessages.Close);
                         break;
+
                     case Keys.Space:
                         PipeServerManager.SendMessage(PipeMessages.Toggle);
                         break;
@@ -216,16 +234,15 @@ namespace QuickLook
             uint idEventThread,
             uint dwmsEventTime)
         {
-            // Alt+Tab产生的无效按键属于上一个窗口。
-            // 前台窗口切换后，清除这个延迟状态，
-            // 使新窗口中的第一次Space可以正常触发。
+            // When the foreground window changes (for example via Alt+Tab),
+            // reset the invalid-key delay so that invalid key presses belonging
+            // to the previous window do not suppress the first valid Space press.
             _lastInvalidKeyPressTick = 0L;
         }
 
-
-
-
-        private void InstallKeyHook(KeyEventHandler downHandler, KeyEventHandler upHandler)
+        private void InstallKeyHook(
+            KeyEventHandler downHandler,
+            KeyEventHandler upHandler)
         {
             _hook = GlobalKeyboardHook.GetInstance();
 
