@@ -14,21 +14,52 @@ jobs:
       - name: Extract source ZIP
         shell: powershell
         run: |
+          Write-Host "Extracting QuickLook-3.7.3.zip..."
+
           Expand-Archive `
             -Path "QuickLook-3.7.3.zip" `
             -DestinationPath "source" `
             -Force
 
-      - name: Show extracted files
+          Write-Host ""
+          Write-Host "Source directory:"
+          Get-ChildItem "source"
+
+      - name: Check solution
         shell: powershell
         run: |
-          Get-ChildItem "source" -Recurse -Depth 2 |
-            Select-Object FullName
+          $solution = "source\QuickLook-3.7.3\QuickLook.sln"
+
+          if (-not (Test-Path $solution)) {
+            Write-Host "ERROR: QuickLook.sln was not found."
+            Write-Host ""
+            Write-Host "Files under source:"
+            Get-ChildItem "source" -Recurse -Depth 3 |
+              Select-Object FullName
+
+            exit 1
+          }
+
+          Write-Host "Found solution:"
+          Write-Host $solution
 
       - name: Get QuickLook.Common
         shell: powershell
         run: |
-          git clone --depth 1 https://github.com/QL-Win/QuickLook.Common.git "source\QuickLook.Common"
+          $common = "source\QuickLook-3.7.3\QuickLook.Common"
+
+          if (Test-Path $common) {
+            Remove-Item $common -Recurse -Force
+          }
+
+          Write-Host "Downloading QuickLook.Common..."
+
+          git clone --depth 1 `
+            https://github.com/QL-Win/QuickLook.Common.git `
+            $common
+
+          Write-Host ""
+          Write-Host "QuickLook.Common downloaded."
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -38,13 +69,13 @@ jobs:
 
       - name: Restore NuGet packages
         shell: powershell
-        working-directory: source
+        working-directory: source\QuickLook-3.7.3
         run: |
           nuget restore QuickLook.sln
 
       - name: Build QuickLook
         shell: powershell
-        working-directory: source
+        working-directory: source\QuickLook-3.7.3
         run: |
           msbuild QuickLook.sln `
             /m `
@@ -55,12 +86,25 @@ jobs:
       - name: Find QuickLook.exe
         shell: powershell
         run: |
-          Get-ChildItem -Path "source" -Filter "QuickLook.exe" -Recurse |
-            Select-Object FullName
+          Write-Host "Searching for QuickLook.exe..."
+
+          $files = Get-ChildItem `
+            -Path "source\QuickLook-3.7.3" `
+            -Filter "QuickLook.exe" `
+            -Recurse
+
+          if ($files.Count -eq 0) {
+            Write-Host "ERROR: QuickLook.exe was not found."
+            exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Found QuickLook.exe:"
+          $files | Select-Object FullName
 
       - name: Upload QuickLook.exe
         uses: actions/upload-artifact@v4
         with:
           name: QuickLook-3.7.3-custom
-          path: "source/**/QuickLook.exe"
+          path: "source/QuickLook-3.7.3/**/QuickLook.exe"
           if-no-files-found: error
