@@ -1,4 +1,4 @@
-﻿// Copyright © 2017 Paddy Xu
+// Copyright © 2017 Paddy Xu
 // 
 // This file is part of QuickLook program.
 // 
@@ -17,7 +17,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.IO;
+using System.Diagnostics;
 using System.Windows.Forms;
 using QuickLook.Common.Helpers;
 using QuickLook.Helpers;
@@ -31,530 +31,152 @@ namespace QuickLook
         private static HashSet<Keys> _validKeys;
 
         private GlobalKeyboardHook _hook;
-
         private bool _isPreviewRequest;
         private bool _spaceIsDown;
         private long _spaceHoldTick;
         private long _lastInvalidKeyPressTick;
 
-        private const long HOLD_TO_PREVIEW_DURATION =
-            TimeSpan.TicksPerMillisecond * 750;
+        // Used to detect Alt+Tab.
+        private bool _altIsDown;
+        private bool _altTabDetected;
 
-        private const long VALID_KEY_PRESS_DELAY =
-            TimeSpan.TicksPerSecond * 1;
-
-        // ------------------------------------------------------------
-        // Debug log
-        //
-        // Log file:
-        // QuickLook.exe directory\UserData\QuickLook-debug.log
-        // ------------------------------------------------------------
-
-        private static readonly object _logLock = new object();
-
-        private static readonly string _logDirectory =
-            Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory,
-                "UserData");
-
-        private static readonly string _logFile =
-            Path.Combine(
-                _logDirectory,
-                "QuickLook-debug.log");
+        private const long HOLD_TO_PREVIEW_DURATION = TimeSpan.TicksPerMillisecond * 750;
+        private const long VALID_KEY_PRESS_DELAY = TimeSpan.TicksPerSecond * 1;
 
         protected KeystrokeDispatcher()
         {
-            Log("========================================");
-            Log("KeystrokeDispatcher CREATED");
-            Log("========================================");
-
-            Log("BaseDirectory: " +
-                AppDomain.CurrentDomain.BaseDirectory);
-
-            Log("LogFile: " +
-                _logFile);
-
-            InstallKeyHook(
-                KeyDownEventHandler,
-                KeyUpEventHandler);
+            InstallKeyHook(KeyDownEventHandler, KeyUpEventHandler);
 
             _validKeys = new HashSet<Keys>(new[]
             {
-                Keys.Up,
-                Keys.Down,
-                Keys.Left,
-                Keys.Right,
-                Keys.Enter,
-                Keys.Space,
-                Keys.Escape
+                Keys.Up, Keys.Down, Keys.Left, Keys.Right,
+                Keys.Enter, Keys.Space, Keys.Escape
             });
-
-            Log("Valid keys initialized.");
         }
 
         public void Dispose()
         {
-            Log("KeystrokeDispatcher DISPOSE");
-
             _hook?.Dispose();
             _hook = null;
-
-            Log("Keyboard hook disposed.");
         }
 
-        // ------------------------------------------------------------
-        // File logging
-        // ------------------------------------------------------------
-
-        private static void Log(string message)
+        private void KeyDownEventHandler(object sender, KeyEventArgs e)
         {
-            try
+            CallViewWindowManagerInvokeRoutine(e, true);
+        }
+
+        private void KeyUpEventHandler(object sender, KeyEventArgs e)
+        {
+            CallViewWindowManagerInvokeRoutine(e, false);
+        }
+
+        private void CallViewWindowManagerInvokeRoutine(KeyEventArgs e, bool isKeyDown)
+        {
+            // Detect Alt+Tab.
+            //
+            // During Alt+Tab, Windows generates invalid key events.
+            // In the original QuickLook 3.7.3 code, those events update
+            // _lastInvalidKeyPressTick. As a result, the first Space
+            // pressed after returning to Explorer can be blocked by the
+            // one-second invalid-key delay.
+            //
+            // We keep the original one-second protection for other
+            // invalid keys, but clear it when Alt+Tab finishes.
+
+            if (e.KeyCode == Keys.LMenu || e.KeyCode == Keys.RMenu)
             {
-                lock (_logLock)
+                if (isKeyDown)
                 {
-                    Directory.CreateDirectory(_logDirectory);
-
-                    string line =
-                        DateTime.Now.ToString(
-                            "yyyy-MM-dd HH:mm:ss.fff") +
-                        " | " +
-                        message;
-
-                    File.AppendAllText(
-                        _logFile,
-                        line +
-                        Environment.NewLine);
-                }
-            }
-            catch
-            {
-                // Never allow logging failure to affect QuickLook.
-            }
-        }
-
-        private static void LogSeparator(string title)
-        {
-            Log("");
-            Log("========== " + title + " ==========");
-        }
-
-        // ------------------------------------------------------------
-        // Keyboard events
-        // ------------------------------------------------------------
-
-        private void KeyDownEventHandler(
-            object sender,
-            KeyEventArgs e)
-        {
-            LogSeparator("KEY DOWN");
-
-            DumpKeyState(e, true);
-
-            CallViewWindowManagerInvokeRoutine(
-                e,
-                true);
-        }
-
-        private void KeyUpEventHandler(
-            object sender,
-            KeyEventArgs e)
-        {
-            LogSeparator("KEY UP");
-
-            DumpKeyState(e, false);
-
-            CallViewWindowManagerInvokeRoutine(
-                e,
-                false);
-        }
-
-        // ------------------------------------------------------------
-        // State dump
-        // ------------------------------------------------------------
-
-        private void DumpKeyState(
-            KeyEventArgs e,
-            bool isKeyDown)
-        {
-            Log("Key                = " +
-                e.KeyCode);
-
-            Log("KeyValue           = " +
-                e.KeyValue);
-
-            Log("Modifiers          = " +
-                e.Modifiers);
-
-            Log("isKeyDown          = " +
-                isKeyDown);
-
-            Log("_isPreviewRequest  = " +
-                _isPreviewRequest);
-
-            Log("_spaceIsDown       = " +
-                _spaceIsDown);
-
-            Log("_spaceHoldTick     = " +
-                _spaceHoldTick);
-
-            Log("_lastInvalidTick   = " +
-                _lastInvalidKeyPressTick);
-
-            try
-            {
-                var focusedWindowType =
-                    NativeMethods.QuickLook.GetFocusedWindowType();
-
-                Log("FocusedWindowType  = " +
-                    focusedWindowType);
-            }
-            catch (Exception ex)
-            {
-                Log("FocusedWindowType  = ERROR: " +
-                    ex.GetType().Name +
-                    ": " +
-                    ex.Message);
-            }
-
-            try
-            {
-                bool foregroundBelongToSelf =
-                    WindowHelper.IsForegroundWindowBelongToSelf();
-
-                Log("ForegroundIsSelf   = " +
-                    foregroundBelongToSelf);
-            }
-            catch (Exception ex)
-            {
-                Log("ForegroundIsSelf   = ERROR: " +
-                    ex.GetType().Name +
-                    ": " +
-                    ex.Message);
-            }
-        }
-
-        // ------------------------------------------------------------
-        // Main keyboard processing
-        // ------------------------------------------------------------
-
-        private void CallViewWindowManagerInvokeRoutine(
-            KeyEventArgs e,
-            bool isKeyDown)
-        {
-            LogSeparator(
-                "CallViewWindowManagerInvokeRoutine");
-
-            Log("Key=" +
-                e.KeyCode +
-                ", Down=" +
-                isKeyDown);
-
-            Log("State BEFORE processing:");
-            Log("_isPreviewRequest = " +
-                _isPreviewRequest);
-
-            Log("_spaceIsDown = " +
-                _spaceIsDown);
-
-            Log("_spaceHoldTick = " +
-                _spaceHoldTick);
-
-            Log("_lastInvalidKeyPressTick = " +
-                _lastInvalidKeyPressTick);
-
-            // --------------------------------------------------------
-            // Invalid keys
-            // --------------------------------------------------------
-
-            if (!_validKeys.Contains(e.KeyCode))
-            {
-                Log("RESULT: INVALID KEY");
-
-                Log(
-                    "Invalid key: " +
-                    e.KeyCode +
-                    ", Down=" +
-                    isKeyDown);
-
-                Log(
-                    "Old _lastInvalidKeyPressTick = " +
-                    _lastInvalidKeyPressTick);
-
-                // IMPORTANT:
-                // Keep the original 3.7.3 behavior here.
-                //
-                // We are diagnosing the original behavior and do not
-                // want the diagnostic build to change the bug.
-                _lastInvalidKeyPressTick =
-                    DateTime.Now.Ticks;
-
-                Log(
-                    "New _lastInvalidKeyPressTick = " +
-                    _lastInvalidKeyPressTick);
-
-                Log(
-                    "RETURN: invalid key");
-
-                return;
-            }
-
-            Log("RESULT: VALID KEY");
-
-            // --------------------------------------------------------
-            // Modifiers
-            // --------------------------------------------------------
-
-            if (isKeyDown &&
-                e.Modifiers != Keys.None)
-            {
-                Log(
-                    "RETURN: valid key has modifier");
-
-                Log(
-                    "Modifiers = " +
-                    e.Modifiers);
-
-                return;
-            }
-
-            // --------------------------------------------------------
-            // Invalid-key delay
-            // --------------------------------------------------------
-
-            long now =
-                DateTime.Now.Ticks;
-
-            long elapsed =
-                now -
-                _lastInvalidKeyPressTick;
-
-            Log(
-                "Invalid-key elapsed ticks = " +
-                elapsed);
-
-            Log(
-                "VALID_KEY_PRESS_DELAY = " +
-                VALID_KEY_PRESS_DELAY);
-
-            if (elapsed <
-                VALID_KEY_PRESS_DELAY)
-            {
-                Log(
-                    "RETURN: valid key blocked by invalid-key delay");
-
-                return;
-            }
-
-            Log(
-                "Invalid-key delay passed.");
-
-            _lastInvalidKeyPressTick = 0L;
-
-            // --------------------------------------------------------
-            // Space
-            // --------------------------------------------------------
-
-            if (isKeyDown &&
-                e.KeyCode == Keys.Space)
-            {
-                Log(
-                    "SPACE DOWN detected.");
-
-                Log(
-                    "_spaceIsDown = " +
-                    _spaceIsDown);
-
-                if (_spaceIsDown)
-                {
-                    Log(
-                        "RETURN: Space is already marked as down.");
-
-                    return;
-                }
-
-                _spaceHoldTick =
-                    DateTime.Now.Ticks;
-
-                Log(
-                    "_spaceHoldTick = " +
-                    _spaceHoldTick);
-            }
-
-            // --------------------------------------------------------
-            // Preview request
-            // --------------------------------------------------------
-
-            if (isKeyDown)
-            {
-                try
-                {
-                    var focusedWindowType =
-                        NativeMethods.QuickLook
-                            .GetFocusedWindowType();
-
-                    bool foregroundBelongToSelf =
-                        WindowHelper
-                            .IsForegroundWindowBelongToSelf();
-
-                    Log(
-                        "GetFocusedWindowType = " +
-                        focusedWindowType);
-
-                    Log(
-                        "IsForegroundWindowBelongToSelf = " +
-                        foregroundBelongToSelf);
-
-                    _isPreviewRequest =
-                        focusedWindowType !=
-                        NativeMethods.QuickLook
-                            .FocusedWindowType.Invalid;
-
-                    _isPreviewRequest |=
-                        foregroundBelongToSelf;
-
-                    Log(
-                        "_isPreviewRequest = " +
-                        _isPreviewRequest);
-                }
-                catch (Exception ex)
-                {
-                    Log(
-                        "ERROR while checking preview request: " +
-                        ex.GetType().Name +
-                        ": " +
-                        ex.Message);
-
-                    throw;
-                }
-            }
-            else
-            {
-                Log(
-                    "KeyUp: keeping existing _isPreviewRequest = " +
-                    _isPreviewRequest);
-            }
-
-            // --------------------------------------------------------
-            // InvokeRoutine
-            // --------------------------------------------------------
-
-            if (_isPreviewRequest)
-            {
-                bool shouldInvoke =
-                    isKeyDown ||
-                    e.KeyCode != Keys.Space ||
-                    DateTime.Now.Ticks -
-                    _spaceHoldTick >=
-                    HOLD_TO_PREVIEW_DURATION;
-
-                Log(
-                    "ShouldInvoke = " +
-                    shouldInvoke);
-
-                if (shouldInvoke)
-                {
-                    Log(
-                        ">>> InvokeRoutine(" +
-                        e.KeyCode +
-                        ", " +
-                        isKeyDown +
-                        ")");
-
-                    InvokeRoutine(
-                        e.KeyCode,
-                        isKeyDown);
-
-                    Log(
-                        "<<< InvokeRoutine");
-
-                    if (isKeyDown &&
-                        e.KeyCode == Keys.Space)
-                    {
-                        _spaceIsDown = true;
-
-                        Log(
-                            "_spaceIsDown = TRUE");
-                    }
+                    _altIsDown = true;
                 }
                 else
                 {
-                    Log(
-                        "RETURN: Space hold duration not reached.");
+                    _altIsDown = false;
                 }
             }
-            else
+
+            if (e.KeyCode == Keys.Tab && isKeyDown && _altIsDown)
             {
-                Log(
-                    "RETURN/NO INVOKE: _isPreviewRequest == false");
+                _altTabDetected = true;
             }
 
-            // --------------------------------------------------------
-            // Key release
-            // --------------------------------------------------------
+            // skip invalid keys, but record the timestamp
+            if (!_validKeys.Contains(e.KeyCode))
+            {
+                Debug.WriteLine($"Invalid keypress: key={e.KeyCode},down={isKeyDown}, time={_lastInvalidKeyPressTick}");
 
+                // Alt+Tab is a special case.
+                //
+                // When Tab is released after Alt+Tab, do not let this
+                // invalid key-up event restart the one-second delay.
+                if (e.KeyCode == Keys.Tab && !isKeyDown && _altTabDetected)
+                {
+                    _lastInvalidKeyPressTick = 0L;
+                    _altTabDetected = false;
+                    return;
+                }
+
+                _lastInvalidKeyPressTick = DateTime.Now.Ticks;
+                return;
+            }
+
+            // skip valid keys when modifiers are used
+            if (isKeyDown && e.Modifiers != Keys.None)
+                return;
+
+            // skip if key is valid but too close after pressing an invalid key
+            if (DateTime.Now.Ticks - _lastInvalidKeyPressTick < VALID_KEY_PRESS_DELAY)
+                return;
+            _lastInvalidKeyPressTick = 0L;
+
+            // skip if user is holding Space (don't skip other valid keys)
+            if (isKeyDown && e.KeyCode == Keys.Space)
+            {
+                if (_spaceIsDown)
+                    return;
+                _spaceIsDown = true;
+                _spaceHoldTick = DateTime.Now.Ticks;
+            }
+
+            // check if the valid key is a preview request
+            if (isKeyDown)
+            {
+                _isPreviewRequest = NativeMethods.QuickLook.GetFocusedWindowType() !=
+                                    NativeMethods.QuickLook.FocusedWindowType.Invalid;
+                _isPreviewRequest |= WindowHelper.IsForegroundWindowBelongToSelf();
+            } // else (when isKeyDown is false), _isPreviewRequest retain its current state
+
+            // call InvokeRoutine only when user pressed a key in a valid window, or
+            // released a key which was pressed in a valid window, with an exception of Space which
+            // must be hold for 750ms before releasing.
+            if (_isPreviewRequest)
+            {
+                if (isKeyDown || e.KeyCode != Keys.Space ||
+                    DateTime.Now.Ticks - _spaceHoldTick >= HOLD_TO_PREVIEW_DURATION)
+                    InvokeRoutine(e.KeyCode, isKeyDown);
+            }
+
+            // when the key has been released, reset variables
             if (!isKeyDown)
             {
-                Log(
-                    "KeyUp: resetting request state.");
-
                 _isPreviewRequest = false;
-
-                _spaceIsDown =
-                    e.KeyCode != Keys.Space &&
-                    _spaceIsDown;
-
-                Log(
-                    "After KeyUp reset:");
-
-                Log(
-                    "_isPreviewRequest = " +
-                    _isPreviewRequest);
-
-                Log(
-                    "_spaceIsDown = " +
-                    _spaceIsDown);
+                _spaceIsDown = e.KeyCode != Keys.Space && _spaceIsDown;
             }
-
-            Log(
-                "Processing finished.");
         }
 
-        // ------------------------------------------------------------
-        // InvokeRoutine
-        // ------------------------------------------------------------
-
-        private void InvokeRoutine(
-            Keys key,
-            bool isKeyDown)
+        private void InvokeRoutine(Keys key, bool isKeyDown)
         {
-            Log(
-                "InvokeRoutine: key=" +
-                key +
-                ", down=" +
-                isKeyDown);
+            Debug.WriteLine($"InvokeRoutine: key={key},down={isKeyDown}");
 
             if (isKeyDown)
             {
                 switch (key)
                 {
                     case Keys.Enter:
-
-                        Log(
-                            "Sending PipeMessages.RunAndClose");
-
-                        PipeServerManager.SendMessage(
-                            PipeMessages.RunAndClose);
-
+                        PipeServerManager.SendMessage(PipeMessages.RunAndClose);
                         break;
-
                     case Keys.Space:
-
-                        Log(
-                            "Sending PipeMessages.Toggle DOWN");
-
-                        PipeServerManager.SendMessage(
-                            PipeMessages.Toggle);
-
+                        PipeServerManager.SendMessage(PipeMessages.Toggle);
                         break;
                 }
             }
@@ -566,75 +188,29 @@ namespace QuickLook
                     case Keys.Down:
                     case Keys.Left:
                     case Keys.Right:
-
-                        Log(
-                            "Sending PipeMessages.Switch");
-
-                        PipeServerManager.SendMessage(
-                            PipeMessages.Switch);
-
+                        PipeServerManager.SendMessage(PipeMessages.Switch);
                         break;
-
                     case Keys.Escape:
-
-                        Log(
-                            "Sending PipeMessages.Close");
-
-                        PipeServerManager.SendMessage(
-                            PipeMessages.Close);
-
+                        PipeServerManager.SendMessage(PipeMessages.Close);
                         break;
-
                     case Keys.Space:
-
-                        Log(
-                            "Sending PipeMessages.Toggle UP");
-
-                        PipeServerManager.SendMessage(
-                            PipeMessages.Toggle);
-
+                        PipeServerManager.SendMessage(PipeMessages.Toggle);
                         break;
                 }
             }
         }
 
-        // ------------------------------------------------------------
-        // Keyboard hook
-        // ------------------------------------------------------------
-
-        private void InstallKeyHook(
-            KeyEventHandler downHandler,
-            KeyEventHandler upHandler)
+        private void InstallKeyHook(KeyEventHandler downHandler, KeyEventHandler upHandler)
         {
-            Log(
-                "Installing GlobalKeyboardHook...");
-
-            _hook =
-                GlobalKeyboardHook.GetInstance();
+            _hook = GlobalKeyboardHook.GetInstance();
 
             _hook.KeyDown += downHandler;
             _hook.KeyUp += upHandler;
-
-            Log(
-                "GlobalKeyboardHook installed.");
         }
-
-        // ------------------------------------------------------------
-        // Singleton
-        // ------------------------------------------------------------
 
         internal static KeystrokeDispatcher GetInstance()
         {
-            if (_instance == null)
-            {
-                Log(
-                    "Creating KeystrokeDispatcher singleton.");
-
-                _instance =
-                    new KeystrokeDispatcher();
-            }
-
-            return _instance;
+            return _instance ?? (_instance = new KeystrokeDispatcher());
         }
     }
 }
