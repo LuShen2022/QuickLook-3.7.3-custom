@@ -1,4 +1,4 @@
-name: Build QuickLook 3.7.3
+name: Build QuickLook 3.7.3 Custom
 
 on:
   workflow_dispatch:
@@ -8,224 +8,78 @@ jobs:
     runs-on: windows-2022
 
     steps:
-
-      # ============================================================
-      # 1. Checkout
-      # ============================================================
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-
-      # ============================================================
-      # 2. 显示源码目录
-      # ============================================================
-      - name: Check source
-        shell: powershell
-        run: |
-          Write-Host "Current directory:"
-          Get-Location
-
-          Write-Host ""
-          Write-Host "Root directory:"
-          Get-ChildItem
-
-
-      # ============================================================
-      # 3. 获取 QuickLook.Common
-      #
-      # QuickLook 3.7.3 的 QuickLook.Common 是 Git Submodule。
-      # 当前仓库是 ZIP 解压后的源码，所以这里手动下载。
-      # ============================================================
-      - name: Download QuickLook.Common
-        shell: powershell
-        run: |
-          if (Test-Path ".\QuickLook.Common") {
-              Remove-Item ".\QuickLook.Common" -Recurse -Force
-          }
-
-          git clone --depth 1 `
-            https://github.com/QL-Win/QuickLook.Common.git `
-            QuickLook.Common
-
-          Write-Host ""
-          Write-Host "QuickLook.Common:"
-          Get-ChildItem ".\QuickLook.Common"
-
-
-      # ============================================================
-      # 4. 安装 Windows SDK 10.0.20348
-      #
-      # QuickLook 3.7.3 原项目使用 20348。
-      # ============================================================
+      # QuickLook 3.7.3 需要 Windows SDK 20348
       - name: Setup Windows SDK 20348
         uses: GuillaumeFalourd/setup-windows10-sdk-action@v2.5
         with:
           sdk-version: 20348
 
-
-      # ============================================================
-      # 5. 检查 Windows SDK
-      # ============================================================
-      - name: Check Windows SDK
+      # 获取 QuickLook.Common 的正确历史版本
+      - name: Restore QuickLook.Common
         shell: powershell
         run: |
-          $sdkRoot = "C:\Program Files (x86)\Windows Kits\10"
+          Remove-Item ".\QuickLook.Common" -Recurse -Force -ErrorAction SilentlyContinue
 
-          Write-Host "Installed Windows SDK versions:"
-          Get-ChildItem `
-            "$sdkRoot\Include" `
-            -ErrorAction SilentlyContinue
+          git clone --depth 1 --branch 3.7.3 `
+            https://github.com/QL-Win/QuickLook.git `
+            ".\upstream"
 
-          Write-Host ""
-          Write-Host "Checking Windows SDK 10.0.20348.0..."
+          $line = git -C ".\upstream" ls-tree HEAD QuickLook.Common
+          $sha = ($line -split '\s+')[2]
 
-          $required = @(
-            "$sdkRoot\Include\10.0.20348.0",
-            "$sdkRoot\UnionMetadata\10.0.20348.0",
-            "$sdkRoot\References\10.0.20348.0"
-          )
+          Write-Host "QuickLook.Common commit: $sha"
 
-          foreach ($path in $required) {
-              if (Test-Path $path) {
-                  Write-Host "FOUND: $path"
-              }
-              else {
-                  Write-Error "NOT FOUND: $path"
-                  exit 1
-              }
+          git clone https://github.com/QL-Win/QuickLook.Common.git `
+            ".\QuickLook.Common"
+
+          git -C ".\QuickLook.Common" fetch origin $sha
+          git -C ".\QuickLook.Common" checkout $sha
+
+          Remove-Item ".\upstream" -Recurse -Force
+
+          if (!(Test-Path ".\QuickLook.Common\Scripts\update-version.ps1")) {
+            Write-Error "QuickLook.Common version is incorrect."
+            exit 1
           }
 
-
-      # ============================================================
-      # 6. 检查 QuickLook.csproj
-      # ============================================================
-      - name: Check QuickLook project
+      # 防止没有 Git tag 时 GitVersion.cs 生成错误版本号
+      - name: Create GitVersion.cs
         shell: powershell
         run: |
-          Write-Host "QuickLook.csproj SDK references:"
-          Select-String `
-            -Path ".\QuickLook\QuickLook.csproj" `
-            -Pattern "10\.0\." |
-            ForEach-Object {
-              Write-Host $_.Line
-            }
-
-
-      # ============================================================
-      # 7. Setup NuGet
-      # ============================================================
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
-
-
-      # ============================================================
-      # 8. Setup MSBuild
-      # ============================================================
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-
-      # ============================================================
-      # 9. 生成 GitVersion.cs
-      #
-      # 防止 Git commit SHA 被当成 AssemblyVersion。
-      # ============================================================
-      - name: Generate GitVersion.cs
-        shell: powershell
-        run: |
-          $content = @"
-          // This file is generated by GitHub Actions
+          @"
           using System.Reflection;
 
           [assembly: AssemblyVersion("3.7.3.0")]
           [assembly: AssemblyFileVersion("3.7.3.0")]
           [assembly: AssemblyInformationalVersion("3.7.3-custom")]
-          "@
+          "@ | Out-File ".\GitVersion.cs" -Encoding utf8
 
-          $content | Out-File `
-            ".\GitVersion.cs" `
-            -Encoding utf8
+      # NuGet
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
 
-          Write-Host ""
-          Write-Host "Generated GitVersion.cs:"
-          Get-Content ".\GitVersion.cs"
-
-
-      # ============================================================
-      # 10. 创建 NuGet packages 目录
-      # ============================================================
-      - name: Prepare NuGet packages directory
-        shell: powershell
-        run: |
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path ".\packages" |
-            Out-Null
-
-          Write-Host "NuGet packages directory:"
-          Get-Item ".\packages"
-
-
-      # ============================================================
-      # 11. Restore NuGet
-      #
-      # 关键：
-      # -PackagesDirectory .\packages
-      #
-      # 防止：
-      # Cannot determine the packages folder
-      # ============================================================
       - name: Restore NuGet packages
         shell: powershell
         run: |
-          nuget restore `
-            ".\QuickLook\QuickLook.csproj" `
+          New-Item -ItemType Directory -Force -Path ".\packages" | Out-Null
+
+          nuget restore ".\QuickLook\QuickLook.csproj" `
             -PackagesDirectory ".\packages" `
             -NonInteractive
 
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "NuGet restore failed."
-              exit $LASTEXITCODE
-          }
+      # MSBuild
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
-          Write-Host ""
-          Write-Host "NuGet restore completed."
-
-
-      # ============================================================
-      # 12. 检查 packages
-      # ============================================================
-      - name: Check NuGet packages
-        shell: powershell
-        run: |
-          Write-Host "NuGet packages:"
-          Get-ChildItem `
-            ".\packages" `
-            -Recurse `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 100 |
-            ForEach-Object {
-              Write-Host $_.FullName
-            }
-
-
-      # ============================================================
-      # 13. Build QuickLook
-      #
-      # QuickLook 3.7.3 是老式 .NET Framework 项目，
-      # 单独编译 csproj 时需要明确指定 OutputPath。
-      # ============================================================
+      # 编译 QuickLook.exe
       - name: Build QuickLook
         shell: powershell
         run: |
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path ".\QuickLook\bin\Release" |
-            Out-Null
+          New-Item -ItemType Directory -Force `
+            -Path ".\QuickLook\bin\Release" | Out-Null
 
           msbuild ".\QuickLook\QuickLook.csproj" `
             /t:Build `
@@ -236,127 +90,17 @@ jobs:
             /m `
             /v:minimal
 
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "MSBuild failed."
-              exit $LASTEXITCODE
-          }
-
-          Write-Host ""
-          Write-Host "MSBuild completed successfully."
-
-          Write-Host ""
-          Write-Host "Build output:"
-          Get-ChildItem ".\QuickLook\bin\Release"
-
-
-      # ============================================================
-      # 14. 查找 QuickLook.exe
-      # ============================================================
-      - name: Find QuickLook.exe
+      # 找到最终 exe
+      - name: Check output
         shell: powershell
         run: |
-          Write-Host "Searching for QuickLook.exe..."
+          Get-ChildItem ".\QuickLook\bin\Release" -Recurse -Filter "QuickLook.exe" |
+            Select-Object FullName, Length
 
-          $files = Get-ChildItem `
-            -Path "." `
-            -Filter "QuickLook.exe" `
-            -Recurse `
-            -File `
-            -ErrorAction SilentlyContinue
-
-          if ($files.Count -eq 0) {
-              Write-Error "QuickLook.exe was not found."
-              exit 1
-          }
-
-          Write-Host ""
-
-          foreach ($file in $files) {
-
-              Write-Host "========================================"
-              Write-Host "FOUND:"
-              Write-Host $file.FullName
-              Write-Host ""
-
-              Write-Host "Size:"
-              Write-Host $file.Length
-              Write-Host ""
-
-              try {
-                  $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo(
-                      $file.FullName
-                  )
-
-                  Write-Host "FileVersion:"
-                  Write-Host $info.FileVersion
-
-                  Write-Host "ProductVersion:"
-                  Write-Host $info.ProductVersion
-              }
-              catch {
-                  Write-Host "Unable to read version information."
-              }
-
-              Write-Host "========================================"
-          }
-
-
-      # ============================================================
-      # 15. 准备最终输出
-      # ============================================================
-      - name: Prepare output
-        shell: powershell
-        run: |
-
-          $files = Get-ChildItem `
-            -Path "." `
-            -Filter "QuickLook.exe" `
-            -Recurse `
-            -File `
-            -ErrorAction SilentlyContinue
-
-          if ($files.Count -eq 0) {
-              Write-Error "QuickLook.exe not found."
-              exit 1
-          }
-
-          # 优先选择 QuickLook\bin\Release 下的 EXE
-          $source = $files |
-            Where-Object {
-              $_.FullName -match "\\QuickLook\\bin\\Release\\"
-            } |
-            Select-Object -First 1
-
-          # 如果没有，则使用找到的第一个
-          if ($null -eq $source) {
-              $source = $files | Select-Object -First 1
-          }
-
-          Write-Host "Selected executable:"
-          Write-Host $source.FullName
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path ".\build-output" |
-            Out-Null
-
-          Copy-Item `
-            $source.FullName `
-            ".\build-output\QuickLook.exe" `
-            -Force
-
-          Write-Host ""
-          Write-Host "Final output:"
-          Get-Item ".\build-output\QuickLook.exe"
-
-
-      # ============================================================
-      # 16. 上传 QuickLook.exe
-      # ============================================================
+      # 只上传 QuickLook.exe
       - name: Upload QuickLook.exe
         uses: actions/upload-artifact@v4
         with:
           name: QuickLook-3.7.3-custom
-          path: build-output/QuickLook.exe
+          path: .\QuickLook\bin\Release\QuickLook.exe
           if-no-files-found: error
