@@ -31,17 +31,21 @@ jobs:
 
           Write-Host "QuickLook.Common downloaded."
 
-      # 3. 安装 NuGet
+      # 3. 配置 MSBuild
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # 4. 安装 NuGet
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
-      # 4. 恢复 NuGet packages
+      # 5. 恢复 NuGet packages
       - name: NuGet restore
         shell: powershell
         run: |
           nuget restore QuickLook.sln
 
-      # 5. 编译 QuickLook 3.7.3
+      # 6. 编译 QuickLook
       - name: Build QuickLook
         shell: powershell
         run: |
@@ -50,7 +54,7 @@ jobs:
             /p:Platform="Any CPU" `
             /m
 
-      # 6. 检查 QuickLook.exe
+      # 7. 查找 QuickLook.exe
       - name: Check build output
         shell: powershell
         run: |
@@ -71,7 +75,7 @@ jobs:
           Write-Host "Found:"
           Write-Host $exe.FullName
 
-      # 7. 上传 QuickLook.exe
+      # 8. 上传 QuickLook.exe
       - name: Upload QuickLook.exe
         uses: actions/upload-artifact@v4
         with:
