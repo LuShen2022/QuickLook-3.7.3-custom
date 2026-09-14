@@ -19,37 +19,77 @@ jobs:
         run: |
           Write-Host "Extracting QuickLook-3.7.3.zip..."
 
-          if (Test-Path "QuickLook-3.7.3") {
-              Remove-Item "QuickLook-3.7.3" -Recurse -Force
+          if (Test-Path "_extracted") {
+              Remove-Item "_extracted" -Recurse -Force
           }
 
           Expand-Archive `
             -Path "QuickLook-3.7.3.zip" `
-            -DestinationPath "QuickLook-3.7.3" `
+            -DestinationPath "_extracted" `
             -Force
 
-      - name: Move files to repository root
+          Write-Host "ZIP extracted successfully."
+
+      - name: Copy source files into repository
         shell: powershell
         run: |
-          $folder = "QuickLook-3.7.3"
+          $root = (Get-Location).Path
+          $extracted = Join-Path $root "_extracted"
 
-          # 如果 ZIP 内部还有一层 QuickLook-3.7.3，
-          # 就把里面的文件移动到仓库根目录。
-          if (Test-Path "$folder\QuickLook-3.7.3\QuickLook.sln") {
-              Write-Host "Detected nested QuickLook-3.7.3 directory."
+          # ZIP 内部是 QuickLook-3.7.3\...
+          $source = Join-Path $extracted "QuickLook-3.7.3"
 
-              Get-ChildItem "$folder\QuickLook-3.7.3" -Force |
-                Move-Item -Destination "." -Force
-
-              Remove-Item "$folder" -Recurse -Force
+          if (-not (Test-Path "$source\QuickLook.sln")) {
+              Write-Host "QuickLook.sln not found."
+              Write-Host "Extracted files:"
+              Get-ChildItem $extracted -Recurse -Depth 3 |
+                  Select-Object FullName
+              exit 1
           }
 
-      - name: Remove ZIP
+          Write-Host "Source found at:"
+          Write-Host $source
+
+          # 逐个复制，允许与仓库已有目录合并
+          Get-ChildItem $source -Force | ForEach-Object {
+
+              $destination = Join-Path $root $_.Name
+
+              if ($_.PSIsContainer) {
+                  Write-Host "Copy directory: $($_.Name)"
+
+                  if (-not (Test-Path $destination)) {
+                      New-Item -ItemType Directory -Path $destination | Out-Null
+                  }
+
+                  Copy-Item `
+                    -Path "$($_.FullName)\*" `
+                    -Destination $destination `
+                    -Recurse `
+                    -Force `
+                    -ErrorAction Stop
+              }
+              else {
+                  Write-Host "Copy file: $($_.Name)"
+
+                  Copy-Item `
+                    -Path $_.FullName `
+                    -Destination $destination `
+                    -Force `
+                    -ErrorAction Stop
+              }
+          }
+
+          Write-Host ""
+          Write-Host "Source copied successfully."
+
+      - name: Remove temporary files
         shell: powershell
         run: |
+          Remove-Item "_extracted" -Recurse -Force
           Remove-Item "QuickLook-3.7.3.zip" -Force
 
-      - name: Commit extracted files
+      - name: Commit extracted source
         shell: powershell
         run: |
           git config user.name "github-actions[bot]"
@@ -57,8 +97,11 @@ jobs:
 
           git add -A
 
-          git status
+          Write-Host ""
+          Write-Host "Git status:"
+          git status --short
 
-          git commit -m "Extract QuickLook 3.7.3 source" || echo "Nothing to commit"
+          git commit -m "Extract QuickLook 3.7.3 source" `
+            || Write-Host "Nothing to commit."
 
           git push
