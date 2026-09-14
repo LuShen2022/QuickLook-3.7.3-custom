@@ -1,110 +1,64 @@
-name: Build QuickLook 3.7.3
+name: Extract ZIP to Repository
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  extract:
     runs-on: windows-2022
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract source ZIP
+      - name: Extract ZIP
         shell: powershell
         run: |
           Write-Host "Extracting QuickLook-3.7.3.zip..."
 
+          if (Test-Path "QuickLook-3.7.3") {
+              Remove-Item "QuickLook-3.7.3" -Recurse -Force
+          }
+
           Expand-Archive `
             -Path "QuickLook-3.7.3.zip" `
-            -DestinationPath "source" `
+            -DestinationPath "QuickLook-3.7.3" `
             -Force
 
-          Write-Host ""
-          Write-Host "Source directory:"
-          Get-ChildItem "source"
-
-      - name: Check solution
+      - name: Move files to repository root
         shell: powershell
         run: |
-          $solution = "source\QuickLook-3.7.3\QuickLook.sln"
+          $folder = "QuickLook-3.7.3"
 
-          if (-not (Test-Path $solution)) {
-            Write-Host "ERROR: QuickLook.sln was not found."
-            Write-Host ""
-            Write-Host "Files under source:"
-            Get-ChildItem "source" -Recurse -Depth 3 |
-              Select-Object FullName
+          # 如果 ZIP 内部还有一层 QuickLook-3.7.3，
+          # 就把里面的文件移动到仓库根目录。
+          if (Test-Path "$folder\QuickLook-3.7.3\QuickLook.sln") {
+              Write-Host "Detected nested QuickLook-3.7.3 directory."
 
-            exit 1
+              Get-ChildItem "$folder\QuickLook-3.7.3" -Force |
+                Move-Item -Destination "." -Force
+
+              Remove-Item "$folder" -Recurse -Force
           }
 
-          Write-Host "Found solution:"
-          Write-Host $solution
-
-      - name: Get QuickLook.Common
+      - name: Remove ZIP
         shell: powershell
         run: |
-          $common = "source\QuickLook-3.7.3\QuickLook.Common"
+          Remove-Item "QuickLook-3.7.3.zip" -Force
 
-          if (Test-Path $common) {
-            Remove-Item $common -Recurse -Force
-          }
-
-          Write-Host "Downloading QuickLook.Common..."
-
-          git clone --depth 1 `
-            https://github.com/QL-Win/QuickLook.Common.git `
-            $common
-
-          Write-Host ""
-          Write-Host "QuickLook.Common downloaded."
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
-
-      - name: Restore NuGet packages
-        shell: powershell
-        working-directory: source\QuickLook-3.7.3
-        run: |
-          nuget restore QuickLook.sln
-
-      - name: Build QuickLook
-        shell: powershell
-        working-directory: source\QuickLook-3.7.3
-        run: |
-          msbuild QuickLook.sln `
-            /m `
-            /p:Configuration=Release `
-            /p:Platform="Any CPU" `
-            /verbosity:minimal
-
-      - name: Find QuickLook.exe
+      - name: Commit extracted files
         shell: powershell
         run: |
-          Write-Host "Searching for QuickLook.exe..."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          $files = Get-ChildItem `
-            -Path "source\QuickLook-3.7.3" `
-            -Filter "QuickLook.exe" `
-            -Recurse
+          git add -A
 
-          if ($files.Count -eq 0) {
-            Write-Host "ERROR: QuickLook.exe was not found."
-            exit 1
-          }
+          git status
 
-          Write-Host ""
-          Write-Host "Found QuickLook.exe:"
-          $files | Select-Object FullName
+          git commit -m "Extract QuickLook 3.7.3 source" || echo "Nothing to commit"
 
-      - name: Upload QuickLook.exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: QuickLook-3.7.3-custom
-          path: "source/QuickLook-3.7.3/**/QuickLook.exe"
-          if-no-files-found: error
+          git push
