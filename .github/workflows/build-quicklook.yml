@@ -215,17 +215,23 @@ jobs:
       # ============================================================
       # 13. Build QuickLook
       #
-      # 只编译 QuickLook.csproj。
-      # 不编译整个 Solution。
+      # QuickLook 3.7.3 是老式 .NET Framework 项目，
+      # 单独编译 csproj 时需要明确指定 OutputPath。
       # ============================================================
       - name: Build QuickLook
         shell: powershell
         run: |
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path ".\QuickLook\bin\Release" |
+            Out-Null
+
           msbuild ".\QuickLook\QuickLook.csproj" `
             /t:Build `
             /p:Configuration=Release `
-            /p:Platform="Any CPU" `
-            /p:TargetFrameworkVersion=v4.7.2 `
+            /p:Platform="AnyCPU" `
+            /p:OutputPath="bin\Release\" `
             /p:RestorePackagesPath=".\packages" `
             /m `
             /v:minimal
@@ -237,6 +243,10 @@ jobs:
 
           Write-Host ""
           Write-Host "MSBuild completed successfully."
+
+          Write-Host ""
+          Write-Host "Build output:"
+          Get-ChildItem ".\QuickLook\bin\Release"
 
 
       # ============================================================
