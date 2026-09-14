@@ -10,7 +10,7 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. 下载仓库源码
+      # 1. 获取源码
       # ============================================================
       - name: Checkout source
         uses: actions/checkout@v4
@@ -19,29 +19,7 @@ jobs:
 
 
       # ============================================================
-      # 2. 显示当前目录结构，方便排查
-      # ============================================================
-      - name: Check source
-        shell: powershell
-        run: |
-          Write-Host "Current directory:"
-          Get-Location
-
-          Write-Host ""
-          Write-Host "Root files:"
-          Get-ChildItem
-
-          Write-Host ""
-          Write-Host "QuickLook project:"
-          Get-ChildItem .\QuickLook
-
-
-      # ============================================================
-      # 3. 下载 QuickLook.Common 子模块
-      #
-      # 原版 3.7.3 的 QuickLook.Common 是 Git Submodule。
-      # 因为我们上传 ZIP 时没有带 .git 子模块信息，
-      # 所以这里直接下载它。
+      # 2. 下载 QuickLook.Common
       # ============================================================
       - name: Download QuickLook.Common
         shell: powershell
@@ -57,7 +35,17 @@ jobs:
           Write-Host ""
           Write-Host "QuickLook.Common downloaded."
 
-          Get-ChildItem .\QuickLook.Common
+
+      # ============================================================
+      # 3. 安装 Windows SDK 10.0.20348
+      #
+      # 使用专门的 GitHub Action。
+      # 不再自己 Invoke-WebRequest。
+      # ============================================================
+      - name: Setup Windows SDK 20348
+        uses: GuillaumeFalourd/setup-windows10-sdk-action@v2.5
+        with:
+          sdk-version: 20348
 
 
       # ============================================================
@@ -66,129 +54,66 @@ jobs:
       - name: Check Windows SDK
         shell: powershell
         run: |
-          Write-Host "Windows Kits:"
+          $sdkRoot = "C:\Program Files (x86)\Windows Kits\10"
+
+          Write-Host "Installed SDK versions:"
           Get-ChildItem `
-            "C:\Program Files (x86)\Windows Kits\10\Include" `
+            "$sdkRoot\Include" `
             -ErrorAction SilentlyContinue
 
           Write-Host ""
-          Write-Host "Reference Assemblies:"
-          Get-ChildItem `
-            "C:\Program Files (x86)\Windows Kits\10\References" `
-            -ErrorAction SilentlyContinue
+          Write-Host "Checking 20348..."
 
-
-      # ============================================================
-      # 5. 安装 Windows SDK 10.0.20348
-      #
-      # QuickLook 3.7.3 的 csproj 原本就是按照 20348 写的。
-      # 不再把 20348 改成 22621。
-      #
-      # 如果 runner 已经有 20348，就跳过。
-      # ============================================================
-      - name: Install Windows SDK 10.0.20348
-        shell: powershell
-        run: |
-          $sdkPath = "C:\Program Files (x86)\Windows Kits\10"
-
-          $sdk20348 = Join-Path `
-            $sdkPath `
-            "References\10.0.20348.0"
-
-          if (Test-Path $sdk20348) {
-              Write-Host "Windows SDK 10.0.20348 is already installed."
-              exit 0
-          }
-
-          Write-Host "Windows SDK 10.0.20348 not found."
-
-          $installer = "$env:TEMP\winsdksetup.exe"
-
-          Write-Host "Downloading Windows SDK installer..."
-
-          Invoke-WebRequest `
-            -Uri "https://go.microsoft.com/fwlink/?linkid=2162611" `
-            -OutFile $installer
-
-          Write-Host "Installer downloaded:"
-          Get-Item $installer
-
-          Write-Host ""
-          Write-Host "Starting Windows SDK installation..."
-
-          Start-Process `
-            -FilePath $installer `
-            -ArgumentList "/quiet", "/norestart", "/features", "+", "/installpath", "C:\Program Files (x86)\Windows Kits\10" `
-            -Wait `
-            -PassThru
-
-          Write-Host ""
-          Write-Host "Checking SDK after installation..."
-
-          if (-not (Test-Path $sdk20348)) {
-              Write-Error "Windows SDK 10.0.20348 was not installed."
-              exit 1
-          }
-
-          Write-Host "Windows SDK 10.0.20348 installed successfully."
-
-
-      # ============================================================
-      # 6. 检查 20348 的关键 WinMD 文件
-      # ============================================================
-      - name: Check Windows SDK 20348 files
-        shell: powershell
-        run: |
-          $base = "C:\Program Files (x86)\Windows Kits\10"
-
-          $files = @(
-            "$base\UnionMetadata\10.0.20348.0\Facade\windows.winmd",
-            "$base\References\10.0.20348.0\Windows.Foundation.FoundationContract\4.0.0.0\Windows.Foundation.FoundationContract.winmd",
-            "$base\References\10.0.20348.0\Windows.Foundation.UniversalApiContract\12.0.0.0\Windows.Foundation.UniversalApiContract.winmd"
+          $paths = @(
+            "$sdkRoot\Include\10.0.20348.0",
+            "$sdkRoot\UnionMetadata\10.0.20348.0",
+            "$sdkRoot\References\10.0.20348.0"
           )
 
-          foreach ($file in $files) {
-              Write-Host ""
-              Write-Host "Checking:"
-              Write-Host $file
-
-              if (Test-Path $file) {
-                  Write-Host "FOUND"
+          foreach ($path in $paths) {
+              if (Test-Path $path) {
+                  Write-Host "FOUND: $path"
               }
               else {
-                  Write-Error "NOT FOUND"
+                  Write-Error "NOT FOUND: $path"
                   exit 1
               }
           }
 
 
       # ============================================================
-      # 7. 安装 NuGet
+      # 5. 检查 QuickLook.csproj 中是否仍然使用 20348
+      # ============================================================
+      - name: Check QuickLook project SDK references
+        shell: powershell
+        run: |
+          Write-Host "Windows SDK references in QuickLook.csproj:"
+          Select-String `
+            -Path ".\QuickLook\QuickLook.csproj" `
+            -Pattern "10\.0\." |
+            ForEach-Object {
+              Write-Host $_.Line
+            }
+
+
+      # ============================================================
+      # 6. Setup NuGet
       # ============================================================
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
 
       # ============================================================
-      # 8. 配置 MSBuild
+      # 7. Setup MSBuild
       # ============================================================
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
 
       # ============================================================
-      # 9. 生成合法的 GitVersion.cs
+      # 8. 生成 GitVersion.cs
       #
-      # GitHub Actions checkout 的 commit 是 SHA：
-      #
-      # 3445eaeb51f7b6884f9065b8bc71d1e67a506132
-      #
-      # 但 AssemblyVersion 不能直接使用这种字符串。
-      #
-      # 所以这里给这次自定义版本：
-      # 3.7.3.0
-      #
-      # 不修改你仓库里的源码，只在 Actions 构建环境中生成。
+      # 防止 Git SHA 被当成 AssemblyVersion。
       # ============================================================
       - name: Generate build version
         shell: powershell
@@ -207,17 +132,14 @@ jobs:
             -Encoding utf8
 
           Write-Host ""
-          Write-Host "Generated GitVersion.cs:"
+          Write-Host "GitVersion.cs:"
           Get-Content ".\GitVersion.cs"
 
 
       # ============================================================
-      # 10. NuGet restore
-      #
-      # 这里只恢复 QuickLook 主项目。
-      # 不恢复整个 Solution。
+      # 9. Restore QuickLook
       # ============================================================
-      - name: Restore QuickLook project
+      - name: Restore QuickLook
         shell: powershell
         run: |
           nuget restore `
@@ -226,16 +148,10 @@ jobs:
 
 
       # ============================================================
-      # 11. 编译 QuickLook
+      # 10. 编译 QuickLook
       #
-      # 只编译 QuickLook.csproj。
-      #
-      # 不编译：
-      # - Installer
-      # - Plugins
-      # - 其它不需要的项目
-      #
-      # 目的就是拿到 QuickLook.exe。
+      # 只编译 QuickLook.csproj
+      # 不编译整个 QuickLook.sln
       # ============================================================
       - name: Build QuickLook
         shell: powershell
@@ -250,7 +166,7 @@ jobs:
 
 
       # ============================================================
-      # 12. 搜索生成的 QuickLook.exe
+      # 11. 查找 QuickLook.exe
       # ============================================================
       - name: Find QuickLook.exe
         shell: powershell
@@ -273,25 +189,20 @@ jobs:
               Write-Host ""
               Write-Host "FOUND:"
               Write-Host $file.FullName
-
-              Write-Host "Size:"
+              Write-Host "SIZE:"
               Write-Host $file.Length
 
-              Write-Host "Version:"
-              try {
-                  $version = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
-                  Write-Host $version.FileVersion
-              }
-              catch {
-                  Write-Host "Unable to read file version."
-              }
+              $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo(
+                  $file.FullName
+              )
+
+              Write-Host "VERSION:"
+              Write-Host $info.FileVersion
           }
 
 
       # ============================================================
-      # 13. 单独复制 QuickLook.exe
-      #
-      # Artifact 中只放这个 EXE。
+      # 12. 准备最终 EXE
       # ============================================================
       - name: Prepare QuickLook.exe
         shell: powershell
@@ -311,7 +222,8 @@ jobs:
           New-Item `
             -ItemType Directory `
             -Force `
-            -Path ".\build-output" | Out-Null
+            -Path ".\build-output" |
+            Out-Null
 
           Copy-Item `
             $source.FullName `
@@ -324,7 +236,7 @@ jobs:
 
 
       # ============================================================
-      # 14. 上传 QuickLook.exe
+      # 13. 上传最终 QuickLook.exe
       # ============================================================
       - name: Upload QuickLook.exe
         uses: actions/upload-artifact@v4
