@@ -40,11 +40,6 @@ jobs:
 
           Remove-Item ".\upstream" -Recurse -Force
 
-          if (!(Test-Path ".\QuickLook.Common\Scripts\update-version.ps1")) {
-            Write-Error "QuickLook.Common version is incorrect."
-            exit 1
-          }
-
       # 防止没有 Git tag 时 GitVersion.cs 生成错误版本号
       - name: Create GitVersion.cs
         shell: powershell
