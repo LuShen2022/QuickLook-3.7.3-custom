@@ -1,0 +1,66 @@
+name: Build QuickLook 3.7.3
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract source ZIP
+        shell: powershell
+        run: |
+          Expand-Archive `
+            -Path "QuickLook-3.7.3.zip" `
+            -DestinationPath "source" `
+            -Force
+
+      - name: Show extracted files
+        shell: powershell
+        run: |
+          Get-ChildItem "source" -Recurse -Depth 2 |
+            Select-Object FullName
+
+      - name: Get QuickLook.Common
+        shell: powershell
+        run: |
+          git clone --depth 1 https://github.com/QL-Win/QuickLook.Common.git "source\QuickLook.Common"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore NuGet packages
+        shell: powershell
+        working-directory: source
+        run: |
+          nuget restore QuickLook.sln
+
+      - name: Build QuickLook
+        shell: powershell
+        working-directory: source
+        run: |
+          msbuild QuickLook.sln `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform="Any CPU" `
+            /verbosity:minimal
+
+      - name: Find QuickLook.exe
+        shell: powershell
+        run: |
+          Get-ChildItem -Path "source" -Filter "QuickLook.exe" -Recurse |
+            Select-Object FullName
+
+      - name: Upload QuickLook.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickLook-3.7.3-custom
+          path: "source/**/QuickLook.exe"
+          if-no-files-found: error
