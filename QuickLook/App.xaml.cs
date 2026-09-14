@@ -100,16 +100,7 @@ namespace QuickLook
 
             return true;
         }
-
-        private void CheckUpdate()
-        {
-            if (DateTime.Now.Ticks - SettingHelper.Get<long>("LastUpdateTicks") < TimeSpan.FromDays(30).Ticks)
-                return;
-
-            Task.Delay(120 * 1000).ContinueWith(_ => Updater.CheckForUpdates(true));
-            SettingHelper.Set("LastUpdateTicks", DateTime.Now.Ticks);
-        }
-
+        
         private void RunListener(StartupEventArgs e)
         {
             TrayIconManager.GetInstance();
