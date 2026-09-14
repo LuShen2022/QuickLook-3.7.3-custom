@@ -1,103 +1,81 @@
-name: Extract ZIP to Repository
+name: Build QuickLook 3.7.3
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  extract:
+  build:
     runs-on: windows-2022
 
     steps:
+      # 1. 获取仓库源码
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: false
 
-      - name: Extract ZIP
+      # 2. 下载 QuickLook.Common
+      - name: Download QuickLook.Common
         shell: powershell
         run: |
-          Write-Host "Extracting QuickLook-3.7.3.zip..."
-
-          if (Test-Path "_extracted") {
-              Remove-Item "_extracted" -Recurse -Force
+          if (Test-Path "QuickLook.Common") {
+              Remove-Item "QuickLook.Common" -Recurse -Force
           }
 
-          Expand-Archive `
-            -Path "QuickLook-3.7.3.zip" `
-            -DestinationPath "_extracted" `
-            -Force
+          git clone --depth 1 `
+            https://github.com/QL-Win/QuickLook.Common.git `
+            QuickLook.Common
 
-          Write-Host "ZIP extracted successfully."
+          Write-Host "QuickLook.Common downloaded."
 
-      - name: Copy source files into repository
+      # 3. 安装 NuGet
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      # 4. 恢复 NuGet packages
+      - name: NuGet restore
         shell: powershell
         run: |
-          $root = (Get-Location).Path
-          $extracted = Join-Path $root "_extracted"
+          nuget restore QuickLook.sln
 
-          # ZIP 内部是 QuickLook-3.7.3\...
-          $source = Join-Path $extracted "QuickLook-3.7.3"
+      # 5. 编译 QuickLook 3.7.3
+      - name: Build QuickLook
+        shell: powershell
+        run: |
+          msbuild QuickLook.sln `
+            /p:Configuration=Release `
+            /p:Platform="Any CPU" `
+            /m
 
-          if (-not (Test-Path "$source\QuickLook.sln")) {
-              Write-Host "QuickLook.sln not found."
-              Write-Host "Extracted files:"
-              Get-ChildItem $extracted -Recurse -Depth 3 |
-                  Select-Object FullName
+      # 6. 检查 QuickLook.exe
+      - name: Check build output
+        shell: powershell
+        run: |
+          Write-Host "Searching for QuickLook.exe..."
+
+          $exe = Get-ChildItem `
+            -Path . `
+            -Filter "QuickLook.exe" `
+            -Recurse `
+            -File |
+            Select-Object -First 1
+
+          if ($null -eq $exe) {
+              Write-Error "QuickLook.exe was not found."
               exit 1
           }
 
-          Write-Host "Source found at:"
-          Write-Host $source
+          Write-Host "Found:"
+          Write-Host $exe.FullName
 
-          # 逐个复制，允许与仓库已有目录合并
-          Get-ChildItem $source -Force | ForEach-Object {
-
-              $destination = Join-Path $root $_.Name
-
-              if ($_.PSIsContainer) {
-                  Write-Host "Copy directory: $($_.Name)"
-
-                  if (-not (Test-Path $destination)) {
-                      New-Item -ItemType Directory -Path $destination | Out-Null
-                  }
-
-                  Copy-Item `
-                    -Path "$($_.FullName)\*" `
-                    -Destination $destination `
-                    -Recurse `
-                    -Force `
-                    -ErrorAction Stop
-              }
-              else {
-                  Write-Host "Copy file: $($_.Name)"
-
-                  Copy-Item `
-                    -Path $_.FullName `
-                    -Destination $destination `
-                    -Force `
-                    -ErrorAction Stop
-              }
-          }
-
-          Write-Host ""
-          Write-Host "Source copied successfully."
-
-      - name: Commit and push
-        shell: powershell
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A
-
-          Write-Host "Git status:"
-          git status --short
-
-          if (git diff --cached --quiet) {
-              Write-Host "Nothing to commit."
-          }
-          else {
-              git commit -m "Extract QuickLook 3.7.3 source"
-              git push
-          }
+      # 7. 上传 QuickLook.exe
+      - name: Upload QuickLook.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickLook-3.7.3-custom
+          path: |
+            **/QuickLook.exe
+          if-no-files-found: error
