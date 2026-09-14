@@ -66,8 +66,6 @@ namespace QuickLook
                 Shutdown();
                 return;
             }
-
-            CheckUpdate();
             RunListener(e);
 
             // first instance: run and preview this file
