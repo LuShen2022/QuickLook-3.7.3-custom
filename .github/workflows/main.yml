@@ -83,13 +83,7 @@ jobs:
           Write-Host ""
           Write-Host "Source copied successfully."
 
-      - name: Remove temporary files
-        shell: powershell
-        run: |
-          Remove-Item "_extracted" -Recurse -Force
-          Remove-Item "QuickLook-3.7.3.zip" -Force
-
-      - name: Commit extracted source
+      - name: Commit and push
         shell: powershell
         run: |
           git config user.name "github-actions[bot]"
@@ -97,11 +91,13 @@ jobs:
 
           git add -A
 
-          Write-Host ""
           Write-Host "Git status:"
           git status --short
 
-          git commit -m "Extract QuickLook 3.7.3 source" `
-            || Write-Host "Nothing to commit."
-
-          git push
+          if (git diff --cached --quiet) {
+              Write-Host "Nothing to commit."
+          }
+          else {
+              git commit -m "Extract QuickLook 3.7.3 source"
+              git push
+          }
