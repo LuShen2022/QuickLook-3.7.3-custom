@@ -52,7 +52,6 @@ namespace QuickLook
                 {
                     new MenuItem($"v{Application.ProductVersion}{(App.IsUWP ? " (UWP)" : "")}") {Enabled = false},
                     new MenuItem("-"),
-                    new MenuItem(TranslationHelper.Get("Icon_CheckUpdate"), (sender, e) => Updater.CheckForUpdates()),
                     new MenuItem(TranslationHelper.Get("Icon_GetPlugin"),
                         (sender, e) => Process.Start("https://github.com/QL-Win/QuickLook/wiki/Available-Plugins")),
                     _itemAutorun,
