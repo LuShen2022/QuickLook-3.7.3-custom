@@ -34,8 +34,14 @@ namespace QuickLook
         private bool _isPreviewRequest;
         private bool _spaceIsDown;
         private long _spaceHoldTick;
+        private long _lastInvalidKeyPressTick;
+
+        // Used to detect Alt+Tab.
+        private bool _altIsDown;
+        private bool _altTabDetected;
 
         private const long HOLD_TO_PREVIEW_DURATION = TimeSpan.TicksPerMillisecond * 750;
+        private const long VALID_KEY_PRESS_DELAY = TimeSpan.TicksPerSecond * 1;
 
         protected KeystrokeDispatcher()
         {
@@ -66,10 +72,51 @@ namespace QuickLook
 
         private void CallViewWindowManagerInvokeRoutine(KeyEventArgs e, bool isKeyDown)
         {
-            // skip invalid keys
+            // Detect Alt+Tab.
+            //
+            // During Alt+Tab, Windows generates invalid key events.
+            // In the original QuickLook 3.7.3 code, those events update
+            // _lastInvalidKeyPressTick. As a result, the first Space
+            // pressed after returning to Explorer can be blocked by the
+            // one-second invalid-key delay.
+            //
+            // We keep the original one-second protection for other
+            // invalid keys, but clear it when Alt+Tab finishes.
+
+            if (e.KeyCode == Keys.LMenu || e.KeyCode == Keys.RMenu)
+            {
+                if (isKeyDown)
+                {
+                    _altIsDown = true;
+                }
+                else
+                {
+                    _altIsDown = false;
+                }
+            }
+
+            if (e.KeyCode == Keys.Tab && isKeyDown && _altIsDown)
+            {
+                _altTabDetected = true;
+            }
+
+            // skip invalid keys, but record the timestamp
             if (!_validKeys.Contains(e.KeyCode))
             {
-                Debug.WriteLine($"Invalid keypress: key={e.KeyCode},down={isKeyDown}");
+                Debug.WriteLine($"Invalid keypress: key={e.KeyCode},down={isKeyDown}, time={_lastInvalidKeyPressTick}");
+
+                // Alt+Tab is a special case.
+                //
+                // When Tab is released after Alt+Tab, do not let this
+                // invalid key-up event restart the one-second delay.
+                if (e.KeyCode == Keys.Tab && !isKeyDown && _altTabDetected)
+                {
+                    _lastInvalidKeyPressTick = 0L;
+                    _altTabDetected = false;
+                    return;
+                }
+
+                _lastInvalidKeyPressTick = DateTime.Now.Ticks;
                 return;
             }
 
@@ -77,12 +124,16 @@ namespace QuickLook
             if (isKeyDown && e.Modifiers != Keys.None)
                 return;
 
+            // skip if key is valid but too close after pressing an invalid key
+            if (DateTime.Now.Ticks - _lastInvalidKeyPressTick < VALID_KEY_PRESS_DELAY)
+                return;
+            _lastInvalidKeyPressTick = 0L;
+
             // skip if user is holding Space (don't skip other valid keys)
             if (isKeyDown && e.KeyCode == Keys.Space)
             {
                 if (_spaceIsDown)
                     return;
-
                 _spaceIsDown = true;
                 _spaceHoldTick = DateTime.Now.Ticks;
             }
@@ -93,8 +144,7 @@ namespace QuickLook
                 _isPreviewRequest = NativeMethods.QuickLook.GetFocusedWindowType() !=
                                     NativeMethods.QuickLook.FocusedWindowType.Invalid;
                 _isPreviewRequest |= WindowHelper.IsForegroundWindowBelongToSelf();
-            }
-            // else (when isKeyDown is false), _isPreviewRequest retain its current state
+            } // else (when isKeyDown is false), _isPreviewRequest retain its current state
 
             // call InvokeRoutine only when user pressed a key in a valid window, or
             // released a key which was pressed in a valid window, with an exception of Space which
